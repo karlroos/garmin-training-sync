@@ -1,0 +1,11 @@
+.env
+.token_cache.json
+fetch.log
+wellness.csv
+activities/
+wellness_raw/
+garmin_export/
+strava_activities/
+__pycache__/
+*.pyc
+.venv/
