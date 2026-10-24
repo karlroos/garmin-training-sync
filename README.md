@@ -6,12 +6,25 @@ client).
 
 It pulls, for each of the last N days (default: yesterday + today):
 
-- Resting heart rate, overnight HRV, sleep score, and sleep duration →
-  upserted into `wellness.csv`.
+- Daily summaries for heart rate (resting/min/max/7-day avg), HRV (last-night
+  avg, weekly avg, 5-min high, baseline status), sleep (score, duration, stage
+  breakdown, respiration, sleep-window stress, sleep avg HR), and body battery
+  (charged/drained points, highest/lowest/start/end level) → upserted into
+  `wellness.csv`, one row per day.
 - The day's activity list (runs, rides, etc.) → written to `activities/<date>.json`.
-- The full raw API responses for heart rate/HRV/sleep → written to
-  `wellness_raw/<date>.json`, in case a field is missing from the CSV and you
-  need to dig into the raw payload.
+- The full raw API responses (heart rate, HRV, sleep, body battery) → written
+  to `wellness_raw/<date>.json`. This includes the actual time series behind
+  the daily summaries — heart rate every ~2 minutes, HRV every ~5 minutes
+  overnight, body battery through the day — in case you need finer granularity
+  than one row per day, or a CSV field comes back blank and you need to dig
+  into the raw payload.
+
+Not pulled, because there's no working endpoint for it on this Personal API
+(confirmed by testing, not just absence of docs): all-day stress score,
+standalone respiration, pulse ox, and VO2max/fitness age. All-day stress in
+particular only shows up in Garmin's full account data export (Settings →
+Export Your Data), not through this API — only the sleep-window stress is
+available here.
 
 Nothing here is specific to one athlete — point it at your own Garmin account
 and it writes your own data to your own local files. No data is sent anywhere

@@ -29,7 +29,15 @@ TOKEN_CACHE_FILE = ROOT / ".token_cache.json"
 TOKEN_URL = "https://personal.connectapi.garmin.com/personalapitoken-service/personal-api/personal-api-key/token"
 API_BASE = "https://personal.connectapi.garmin.com"
 
-CSV_FIELDS = ["date", "resting_hr", "hrv_last_night_avg", "sleep_score", "sleep_hours"]
+CSV_FIELDS = [
+    "date",
+    "resting_hr", "hr_min", "hr_max", "hr_7day_avg",
+    "hrv_last_night_avg", "hrv_weekly_avg", "hrv_5min_high", "hrv_status",
+    "sleep_score", "sleep_hours", "deep_sleep_min", "light_sleep_min", "rem_sleep_min",
+    "awake_min", "awake_count", "avg_respiration", "avg_sleep_stress", "sleep_avg_hr",
+    "body_battery_charged", "body_battery_drained", "body_battery_highest",
+    "body_battery_lowest", "body_battery_start", "body_battery_end",
+]
 
 logging.basicConfig(
     filename=LOG_FILE,
@@ -111,13 +119,16 @@ def fetch_wellness_day(token, day):
     iso = day.isoformat()
     raw = {}
 
-    for name, path in [
-        ("heart_rate", "/wellness-service/wellness/dailyHeartRate"),
-        ("hrv", f"/hrv-service/hrv/{iso}"),
-        ("sleep", "/sleep-service/sleep/dailySleep"),
+    for name, path, params in [
+        ("heart_rate", "/wellness-service/wellness/dailyHeartRate", {"date": iso}),
+        ("hrv", f"/hrv-service/hrv/{iso}", None),
+        ("sleep", "/sleep-service/sleep/dailySleep", {"date": iso}),
+        # Body battery has no per-date path; it's a report queried over a range,
+        # so a single-day report just uses the same date for start and end.
+        ("body_battery", "/wellness-service/wellness/bodyBattery/reports/daily",
+         {"startDate": iso, "endDate": iso}),
     ]:
         try:
-            params = None if name == "hrv" else {"date": iso}
             raw[name] = api_get(token, path, params=params)
         except requests.HTTPError as e:
             log.warning("%s fetch failed for %s: %s", name, iso, e)
@@ -128,33 +139,70 @@ def fetch_wellness_day(token, day):
 
     hr = raw["heart_rate"] or {}
     hrv_summary = (raw["hrv"] or {}).get("hrvSummary") or {}
+    hrv_baseline = hrv_summary.get("baseline") or {}
     sleep = raw["sleep"] or {}
-    sleep_overall = ((sleep.get("sleepScores") or {}).get("overall")) or {}
+    sleep_scores = sleep.get("sleepScores") or {}
+    sleep_overall = sleep_scores.get("overall") or {}
+    # bodyBattery/reports/daily returns a list (one entry per requested day).
+    battery = (raw["body_battery"] or [{}])[0] if raw["body_battery"] else {}
+    battery_values = [v[1] for v in (battery.get("bodyBatteryValuesArray") or [])]
 
     resting_hr = first(hr, "restingHeartRate", "restingHeartRateInBeatsPerMinute")
+    hr_min = first(hr, "minHeartRate")
+    hr_max = first(hr, "maxHeartRate")
+    hr_7day_avg = first(hr, "lastSevenDaysAvgRestingHeartRate")
+
     hrv_avg = first(hrv_summary, "lastNightAvg", "weeklyAvg", "lastNight5MinHigh")
+    hrv_weekly_avg = first(hrv_summary, "weeklyAvg")
+    hrv_5min_high = first(hrv_summary, "lastNight5MinHigh")
+    hrv_status = first(hrv_summary, "status")
+
     sleep_score = first(sleep_overall, "value") or first(sleep, "sleepScore", "overallSleepScore")
     sleep_seconds = first(sleep, "sleepTimeSeconds", "totalSleepSeconds", "sleepDurationInSeconds")
     sleep_hours = round(sleep_seconds / 3600, 2) if sleep_seconds else None
+    deep_sleep_min = round(sleep["deepSleepSeconds"] / 60, 1) if sleep.get("deepSleepSeconds") is not None else None
+    light_sleep_min = round(sleep["lightSleepSeconds"] / 60, 1) if sleep.get("lightSleepSeconds") is not None else None
+    rem_sleep_min = round(sleep["remSleepSeconds"] / 60, 1) if sleep.get("remSleepSeconds") is not None else None
+    awake_min = round(sleep["awakeSleepSeconds"] / 60, 1) if sleep.get("awakeSleepSeconds") is not None else None
+    awake_count = first(sleep, "awakeCount")
+    avg_respiration = first(sleep, "averageRespirationValue")
+    # All-day stress has no working endpoint on this Personal API (tried the obvious
+    # dailyStress/stress-service paths, all 404) - only sleep-time stress is exposed,
+    # via the sleep response.
+    avg_sleep_stress = first(sleep, "avgSleepStress")
+    sleep_avg_hr = first(sleep, "avgHeartRate")
 
-    missing = [name for name, val in [
-        ("resting_hr", resting_hr), ("hrv", hrv_avg),
-        ("sleep_score", sleep_score), ("sleep_hours", sleep_hours),
-    ] if val is None]
+    battery_charged = first(battery, "charged")
+    battery_drained = first(battery, "drained")
+    battery_highest = max(battery_values) if battery_values else None
+    battery_lowest = min(battery_values) if battery_values else None
+    battery_start = battery_values[0] if battery_values else None
+    battery_end = battery_values[-1] if battery_values else None
+
+    row = {
+        "date": iso,
+        "resting_hr": resting_hr, "hr_min": hr_min, "hr_max": hr_max, "hr_7day_avg": hr_7day_avg,
+        "hrv_last_night_avg": hrv_avg, "hrv_weekly_avg": hrv_weekly_avg,
+        "hrv_5min_high": hrv_5min_high, "hrv_status": hrv_status,
+        "sleep_score": sleep_score, "sleep_hours": sleep_hours,
+        "deep_sleep_min": deep_sleep_min, "light_sleep_min": light_sleep_min,
+        "rem_sleep_min": rem_sleep_min, "awake_min": awake_min, "awake_count": awake_count,
+        "avg_respiration": avg_respiration, "avg_sleep_stress": avg_sleep_stress,
+        "sleep_avg_hr": sleep_avg_hr,
+        "body_battery_charged": battery_charged, "body_battery_drained": battery_drained,
+        "body_battery_highest": battery_highest, "body_battery_lowest": battery_lowest,
+        "body_battery_start": battery_start, "body_battery_end": battery_end,
+    }
+
+    missing = [name for name, val in row.items() if name != "date" and val is None]
     if missing:
         log.warning(
             "%s: could not extract %s from API response - inspect wellness_raw/%s.json "
-            "and add the real field name(s) to the `first(...)` calls in fetch_training_data.py",
+            "and add the real field name(s) to the relevant extraction in fetch_training_data.py",
             iso, ", ".join(missing), iso,
         )
 
-    return {
-        "date": iso,
-        "resting_hr": resting_hr,
-        "hrv_last_night_avg": hrv_avg,
-        "sleep_score": sleep_score,
-        "sleep_hours": sleep_hours,
-    }
+    return row
 
 
 def fetch_activities_day(token, day):
@@ -182,7 +230,7 @@ def upsert_wellness_row(row):
                 rows[r["date"]] = r
     rows[row["date"]] = row
     with WELLNESS_CSV.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS, restval="")
         writer.writeheader()
         for d in sorted(rows):
             writer.writerow(rows[d])
