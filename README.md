@@ -66,3 +66,8 @@ Output files (all gitignored, since they're personal data):
   used, only the Python stdlib + `requests`.
 - Re-running for a date you already have is safe — `wellness.csv` rows are
   upserted by date, and activity/raw files are overwritten.
+- The script forces IPv4 for all requests. On a host with a broken/unreliable
+  IPv6 route to Garmin's API, `requests` can pick the IPv6 address and hang
+  indefinitely instead of failing over to IPv4 or timing out — the `timeout=`
+  kwarg doesn't help since the hang happens during connection, before it
+  applies. If you don't have this problem, it's harmless to leave in.

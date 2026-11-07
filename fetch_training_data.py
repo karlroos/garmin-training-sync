@@ -11,12 +11,19 @@ import base64
 import csv
 import json
 import logging
+import socket
 import sys
 import time
 from datetime import date, timedelta
 from pathlib import Path
 
 import requests
+import urllib3.util.connection as urllib3_cn
+
+# This environment's IPv6 route to Garmin's API is unreliable (connections hang
+# rather than fail fast), while IPv4 works fine. Force IPv4 so a bad IPv6 route
+# doesn't silently stall every request for minutes/hours.
+urllib3_cn.allowed_gai_family = lambda: socket.AF_INET
 
 ROOT = Path(__file__).resolve().parent
 ENV_FILE = ROOT / ".env"
