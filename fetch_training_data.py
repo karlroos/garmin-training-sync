@@ -44,6 +44,8 @@ CSV_FIELDS = [
     "awake_min", "awake_count", "avg_respiration", "avg_sleep_stress", "sleep_avg_hr",
     "body_battery_charged", "body_battery_drained", "body_battery_highest",
     "body_battery_lowest", "body_battery_start", "body_battery_end",
+    "steps", "step_goal",
+    "stress_overall", "stress_rest_min", "stress_low_min", "stress_medium_min", "stress_high_min",
 ]
 
 logging.basicConfig(
@@ -103,15 +105,24 @@ def obtain_token(api_key):
     return access_token
 
 
-def api_get(token, path, params=None):
-    resp = requests.get(
-        f"{API_BASE}{path}",
-        headers={"Authorization": f"Bearer {token}"},
-        params=params,
-        timeout=30,
-    )
-    resp.raise_for_status()
-    return resp.json()
+def api_get(token, path, params=None, max_retries=4):
+    """GET with retry/backoff on 429 (rate limit) - a multi-day backfill firing
+    many requests back-to-back can trip Garmin's rate limiter mid-run otherwise,
+    which previously surfaced as a silent all-fields-missing row for that day.
+    """
+    for attempt in range(max_retries + 1):
+        resp = requests.get(
+            f"{API_BASE}{path}",
+            headers={"Authorization": f"Bearer {token}"},
+            params=params,
+            timeout=30,
+        )
+        if resp.status_code == 429 and attempt < max_retries:
+            wait = float(resp.headers.get("Retry-After", 2 ** attempt))
+            time.sleep(wait)
+            continue
+        resp.raise_for_status()
+        return resp.json()
 
 
 def first(d, *keys, default=None):
@@ -130,10 +141,13 @@ def fetch_wellness_day(token, day):
         ("heart_rate", "/wellness-service/wellness/dailyHeartRate", {"date": iso}),
         ("hrv", f"/hrv-service/hrv/{iso}", None),
         ("sleep", "/sleep-service/sleep/dailySleep", {"date": iso}),
-        # Body battery has no per-date path; it's a report queried over a range,
-        # so a single-day report just uses the same date for start and end.
+        # Body battery, steps, and all-day stress share the same range-query shape:
+        # no per-date path, so a single-day report just repeats the date as both
+        # the start and end of the range.
         ("body_battery", "/wellness-service/wellness/bodyBattery/reports/daily",
          {"startDate": iso, "endDate": iso}),
+        ("steps", f"/usersummary-service/stats/steps/daily/{iso}/{iso}", None),
+        ("stress", f"/usersummary-service/stats/stress/daily/{iso}/{iso}", None),
     ]:
         try:
             raw[name] = api_get(token, path, params=params)
@@ -150,9 +164,13 @@ def fetch_wellness_day(token, day):
     sleep = raw["sleep"] or {}
     sleep_scores = sleep.get("sleepScores") or {}
     sleep_overall = sleep_scores.get("overall") or {}
-    # bodyBattery/reports/daily returns a list (one entry per requested day).
+    # bodyBattery/reports/daily, steps, and stress all return a list (one entry
+    # per requested day) rather than a single object.
     battery = (raw["body_battery"] or [{}])[0] if raw["body_battery"] else {}
     battery_values = [v[1] for v in (battery.get("bodyBatteryValuesArray") or [])]
+    steps_day = (raw["steps"] or [{}])[0] if raw["steps"] else {}
+    stress_day = (raw["stress"] or [{}])[0] if raw["stress"] else {}
+    stress_values = stress_day.get("values") or {}
 
     resting_hr = first(hr, "restingHeartRate", "restingHeartRateInBeatsPerMinute")
     hr_min = first(hr, "minHeartRate")
@@ -173,9 +191,6 @@ def fetch_wellness_day(token, day):
     awake_min = round(sleep["awakeSleepSeconds"] / 60, 1) if sleep.get("awakeSleepSeconds") is not None else None
     awake_count = first(sleep, "awakeCount")
     avg_respiration = first(sleep, "averageRespirationValue")
-    # All-day stress has no working endpoint on this Personal API (tried the obvious
-    # dailyStress/stress-service paths, all 404) - only sleep-time stress is exposed,
-    # via the sleep response.
     avg_sleep_stress = first(sleep, "avgSleepStress")
     sleep_avg_hr = first(sleep, "avgHeartRate")
 
@@ -185,6 +200,17 @@ def fetch_wellness_day(token, day):
     battery_lowest = min(battery_values) if battery_values else None
     battery_start = battery_values[0] if battery_values else None
     battery_end = battery_values[-1] if battery_values else None
+
+    steps = first(steps_day, "totalSteps")
+    step_goal = first(steps_day, "stepGoal")
+
+    # All-day stress durations come back in seconds; convert to minutes like the
+    # sleep-stage fields above. overallStressLevel is Garmin's 0-100 daily score.
+    stress_overall = first(stress_values, "overallStressLevel")
+    stress_rest_min = round(stress_values["restStressDuration"] / 60, 1) if stress_values.get("restStressDuration") is not None else None
+    stress_low_min = round(stress_values["lowStressDuration"] / 60, 1) if stress_values.get("lowStressDuration") is not None else None
+    stress_medium_min = round(stress_values["mediumStressDuration"] / 60, 1) if stress_values.get("mediumStressDuration") is not None else None
+    stress_high_min = round(stress_values["highStressDuration"] / 60, 1) if stress_values.get("highStressDuration") is not None else None
 
     row = {
         "date": iso,
@@ -199,6 +225,10 @@ def fetch_wellness_day(token, day):
         "body_battery_charged": battery_charged, "body_battery_drained": battery_drained,
         "body_battery_highest": battery_highest, "body_battery_lowest": battery_lowest,
         "body_battery_start": battery_start, "body_battery_end": battery_end,
+        "steps": steps, "step_goal": step_goal,
+        "stress_overall": stress_overall, "stress_rest_min": stress_rest_min,
+        "stress_low_min": stress_low_min, "stress_medium_min": stress_medium_min,
+        "stress_high_min": stress_high_min,
     }
 
     missing = [name for name, val in row.items() if name != "date" and val is None]
@@ -230,12 +260,24 @@ def fetch_activities_day(token, day):
 
 
 def upsert_wellness_row(row):
+    """Upsert by date, merging field-by-field rather than replacing the whole
+    row. A day that fails to fetch (rate-limited, API hiccup, etc.) returns a
+    row of all-None values - without merging, that would silently overwrite
+    a previously-fetched good row with blanks.
+    """
     rows = {}
     if WELLNESS_CSV.exists():
         with WELLNESS_CSV.open(newline="") as f:
             for r in csv.DictReader(f):
                 rows[r["date"]] = r
-    rows[row["date"]] = row
+
+    existing = rows.get(row["date"], {})
+    merged = dict(existing)
+    for key, value in row.items():
+        if value is not None and value != "":
+            merged[key] = value
+    rows[row["date"]] = merged
+
     with WELLNESS_CSV.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_FIELDS, restval="")
         writer.writeheader()
@@ -264,7 +306,9 @@ def main():
     today = date.today()
     days = [today - timedelta(days=i) for i in range(args.days - 1, -1, -1)]
 
-    for day in days:
+    for i, day in enumerate(days):
+        if i > 0:
+            time.sleep(0.5)  # light pacing so a long backfill doesn't trip rate limiting
         row = fetch_wellness_day(token, day)
         upsert_wellness_row(row)
         n_activities = fetch_activities_day(token, day)
