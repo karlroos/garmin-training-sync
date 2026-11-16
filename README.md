@@ -1,8 +1,8 @@
 # garmin-training-sync
 
-A small script that syncs your own Garmin Connect wellness and activity data
-to local files, using Garmin's official Personal API (not a scraped/unofficial
-client).
+Two small scripts: one syncs your own Garmin Connect wellness and activity
+data to local files, using Garmin's official Personal API (not a scraped/
+unofficial client); the other turns that data into a browsable HTML report.
 
 It pulls, for each of the last N days (default: yesterday + today):
 
@@ -48,6 +48,24 @@ python3 fetch_training_data.py          # yesterday + today (default)
 python3 fetch_training_data.py --days 10  # last 10 days, backfill
 ```
 
+### Report
+
+```bash
+python3 build_wellness_report.py
+# or with a short editorial note at the top:
+python3 build_wellness_report.py --callout "<b>Good night.</b> HRV back above baseline." --callout-tone ok
+```
+
+Reads `wellness.csv` and writes a self-contained `wellness_report.html` —
+open it directly or host it anywhere. Newest day first throughout (the day
+strip and every table), with one tab per calendar month so the page doesn't
+turn into one ever-growing table as months of data pile up. `--callout-tone`
+is `ok`/`watch`/`alert`, matching the same severity colors the day strip and
+table row highlighting use (see Notes below for how severity is decided).
+The callout itself isn't auto-generated — that takes judgment about what's
+actually notable, which the script can't make on its own; pass `--callout` or
+edit the `<!-- CALLOUT -->` placeholder in the output afterward.
+
 Output files (all gitignored, since they're personal data):
 
 - `wellness.csv`
@@ -78,3 +96,10 @@ Output files (all gitignored, since they're personal data):
   field-by-field rather than replacing the whole row, so a day that still fails
   after retries can't silently blank out previously-fetched good data for that
   date — it only ever adds or updates fields it successfully fetched.
+- `build_wellness_report.py`'s severity rule (used for the WATCH/ALERT row
+  highlighting): ALERT is only sleep score under 40 or resting HR ≥46 — a
+  genuinely acute day. A lingering HRV status of UNBALANCED/LOW on its own
+  stays at WATCH, even across several days, as long as resting HR and HRV are
+  themselves back in normal range — Garmin's status can lag the underlying
+  numbers by a few days on the way out of a dip, and escalating on the status
+  alone produced false alarms in practice.
