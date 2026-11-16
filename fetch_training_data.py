@@ -206,11 +206,16 @@ def fetch_wellness_day(token, day):
 
     # All-day stress durations come back in seconds; convert to minutes like the
     # sleep-stage fields above. overallStressLevel is Garmin's 0-100 daily score.
+    # Garmin returns an explicit `null` (not 0, not a missing key) for a stress
+    # band with no minutes in it - e.g. highStressDuration: null on a calm day -
+    # so treat null-but-present-block as 0 rather than "missing data". Only
+    # treat the whole thing as missing if stress_values itself is empty (the
+    # fetch failed), not when one sub-field happens to be null.
     stress_overall = first(stress_values, "overallStressLevel")
-    stress_rest_min = round(stress_values["restStressDuration"] / 60, 1) if stress_values.get("restStressDuration") is not None else None
-    stress_low_min = round(stress_values["lowStressDuration"] / 60, 1) if stress_values.get("lowStressDuration") is not None else None
-    stress_medium_min = round(stress_values["mediumStressDuration"] / 60, 1) if stress_values.get("mediumStressDuration") is not None else None
-    stress_high_min = round(stress_values["highStressDuration"] / 60, 1) if stress_values.get("highStressDuration") is not None else None
+    stress_rest_min = round((stress_values.get("restStressDuration") or 0) / 60, 1) if stress_values else None
+    stress_low_min = round((stress_values.get("lowStressDuration") or 0) / 60, 1) if stress_values else None
+    stress_medium_min = round((stress_values.get("mediumStressDuration") or 0) / 60, 1) if stress_values else None
+    stress_high_min = round((stress_values.get("highStressDuration") or 0) / 60, 1) if stress_values else None
 
     row = {
         "date": iso,
