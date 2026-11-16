@@ -27,9 +27,16 @@ score, hill score, calories, floors climbed, and intensity minutes. All of
 these only show up in Garmin's full account data export (Settings → Export
 Your Data), not through this API.
 
-Nothing here is specific to one athlete — point it at your own Garmin account
-and it writes your own data to your own local files. No data is sent anywhere
-except to Garmin's API to fetch it.
+Nothing here is specific to one athlete in terms of *code* — point it at your
+own Garmin account and it writes your own data to your own local files. No
+data is sent anywhere except to Garmin's API to fetch it.
+
+**The severity thresholds in `build_wellness_report.py` are my own numbers,
+not universal ones.** Resting HR ≥44/≥46 and overnight HRV <54 are tuned to
+my baseline (normal resting HR ~38–44, normal HRV ~54–81) — if yours runs
+higher or lower at rest, these will under- or over-flag for you. Edit the
+`severity()` function (see Notes below for exactly which numbers) before
+trusting the WATCH/ALERT coloring on your own data.
 
 ## Setup
 
@@ -97,9 +104,14 @@ Output files (all gitignored, since they're personal data):
   after retries can't silently blank out previously-fetched good data for that
   date — it only ever adds or updates fields it successfully fetched.
 - `build_wellness_report.py`'s severity rule (used for the WATCH/ALERT row
-  highlighting): ALERT is only sleep score under 40 or resting HR ≥46 — a
-  genuinely acute day. A lingering HRV status of UNBALANCED/LOW on its own
-  stays at WATCH, even across several days, as long as resting HR and HRV are
-  themselves back in normal range — Garmin's status can lag the underlying
-  numbers by a few days on the way out of a dip, and escalating on the status
-  alone produced false alarms in practice.
+  highlighting) — **these exact numbers are personal, see the warning above**:
+  ALERT is sleep score under 40 or resting HR ≥46 — a genuinely acute day for
+  me. WATCH is HRV under 54 or resting HR ≥44, or Garmin's HRV status reading
+  UNBALANCED/LOW. A lingering UNBALANCED/LOW status on its own stays at WATCH
+  rather than escalating to ALERT, even across several days, as long as
+  resting HR and HRV are themselves back in normal range — Garmin's status
+  can lag the underlying numbers by a few days on the way out of a dip, and
+  escalating on the status alone produced false alarms in practice. If you're
+  not me: find your own normal resting HR and HRV range (a few weeks of this
+  script's output will show it) and adjust the four numbers in `severity()`
+  accordingly.
