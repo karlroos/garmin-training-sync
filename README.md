@@ -104,14 +104,12 @@ Output files (all gitignored, since they're personal data):
   after retries can't silently blank out previously-fetched good data for that
   date — it only ever adds or updates fields it successfully fetched.
 - `build_wellness_report.py`'s severity rule (used for the WATCH/ALERT row
-  highlighting) — **these exact numbers are personal, see the warning above**:
-  ALERT is sleep score under 40 or resting HR ≥46 — a genuinely acute day for
-  me. WATCH is HRV under 54 or resting HR ≥44, or Garmin's HRV status reading
-  UNBALANCED/LOW. A lingering UNBALANCED/LOW status on its own stays at WATCH
-  rather than escalating to ALERT, even across several days, as long as
-  resting HR and HRV are themselves back in normal range — Garmin's status
-  can lag the underlying numbers by a few days on the way out of a dip, and
-  escalating on the status alone produced false alarms in practice. If you're
-  not me: find your own normal resting HR and HRV range (a few weeks of this
-  script's output will show it) and adjust the four numbers in `severity()`
-  accordingly.
+  highlighting) — **these exact numbers are personal, see the warning above**.
+  They're pulled together as named constants right under the imports, in a
+  block marked `PERSONAL THRESHOLDS - CHANGE THESE TO FIT YOU`, rather than
+  buried inline in the logic — that's the one place to edit. A lingering
+  UNBALANCED/LOW HRV status on its own stays at WATCH rather than escalating
+  to ALERT, even across several days, as long as resting HR and HRV are
+  themselves back in normal range — Garmin's status can lag the underlying
+  numbers by a few days on the way out of a dip, and escalating on the status
+  alone produced false alarms in practice.

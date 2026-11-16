@@ -22,6 +22,22 @@ ROOT = Path(__file__).resolve().parent
 WELLNESS_CSV = ROOT / "wellness.csv"
 OUTPUT_HTML = ROOT / "wellness_report.html"
 
+# ============================================================================
+# PERSONAL THRESHOLDS - CHANGE THESE TO FIT YOU
+#
+# These are tuned to one athlete's own normal resting HR (~38-44 bpm) and
+# overnight HRV (~54-81 ms) baseline. If you run this on your own data, find
+# your own normal ranges first (a few weeks of wellness.csv will show them)
+# and replace the numbers below - as given, they will under- or over-flag on
+# anyone whose resting HR/HRV baseline differs from the original athlete's.
+# ============================================================================
+ALERT_SLEEP_SCORE_BELOW = 40     # sleep score under this -> ALERT (very poor night)
+ALERT_RESTING_HR_AT_OR_ABOVE = 46  # resting HR at/above this -> ALERT (genuinely elevated)
+WATCH_RESTING_HR_AT_OR_ABOVE = 44  # resting HR at/above this -> WATCH (mildly elevated)
+WATCH_HRV_BELOW = 54               # overnight HRV under this -> WATCH (below personal baseline)
+WATCH_SLEEP_SCORE_BELOW = 70       # sleep score under this -> flag the stat card (not full WATCH)
+# ============================================================================
+
 TONE_STYLES = {
     "ok": ("var(--ok-bg)", "#CFE4D7", "var(--ok)"),
     "watch": ("var(--watch-bg)", "#E9CFA3", "var(--watch)"),
@@ -46,9 +62,9 @@ def severity(r):
     hrv = float(r["hrv_last_night_avg"])
     sleep_score = float(r["sleep_score"])
     status = r["hrv_status"]
-    if sleep_score < 40 or rhr >= 46:
+    if sleep_score < ALERT_SLEEP_SCORE_BELOW or rhr >= ALERT_RESTING_HR_AT_OR_ABOVE:
         return "alert"
-    if status in ("UNBALANCED", "LOW") or hrv < 54 or rhr >= 44:
+    if status in ("UNBALANCED", "LOW") or hrv < WATCH_HRV_BELOW or rhr >= WATCH_RESTING_HR_AT_OR_ABOVE:
         return "watch"
     return "ok"
 
@@ -91,13 +107,11 @@ def build_daystrip(rows_desc):
 
 
 def build_stats(latest):
-    sev = severity(latest)
-    hr_flag = " flag" if severity({**latest, "sleep_score": "100", "hrv_status": "BALANCED"}) != "ok" else ""
     # Only flag individual cards when that specific metric is the reason for concern,
     # not just because some other field on the same day is bad.
-    rhr_flag = " flag" if float(latest["resting_hr"]) >= 44 else ""
-    hrv_flag = " flag" if latest["hrv_status"] in ("UNBALANCED", "LOW") or float(latest["hrv_last_night_avg"]) < 54 else ""
-    sleep_flag = " flag" if float(latest["sleep_score"]) < 70 else ""
+    rhr_flag = " flag" if float(latest["resting_hr"]) >= WATCH_RESTING_HR_AT_OR_ABOVE else ""
+    hrv_flag = " flag" if latest["hrv_status"] in ("UNBALANCED", "LOW") or float(latest["hrv_last_night_avg"]) < WATCH_HRV_BELOW else ""
+    sleep_flag = " flag" if float(latest["sleep_score"]) < WATCH_SLEEP_SCORE_BELOW else ""
     date_lbl = date_short(latest["date"])
     hrv_note = ""
     if latest["hrv_status"] in ("UNBALANCED", "LOW"):
@@ -374,7 +388,7 @@ def build(callout_html=None, callout_tone="watch"):
   <footer>
     Newest-first throughout, one tab per calendar month &mdash; click a month to see its daily tables.
     Steps and all-day stress: "% of goal" is against a 10,000-step goal; stress is Garmin's 0&ndash;100 daily score plus minutes spent in each stress band.
-    Day-strip/row status: WATCH = overnight HRV under the 54&ndash;81&nbsp;ms baseline, resting HR &ge;44&nbsp;bpm, or Garmin's own HRV status reading UNBALANCED/LOW. ALERT = sleep score under 40 or resting HR &ge;46 &mdash; reserved for a genuinely acute day; a lingering UNBALANCED/LOW status alone stays at WATCH once the core numbers are recovering.
+    Day-strip/row status: WATCH = overnight HRV under {num(WATCH_HRV_BELOW)}&nbsp;ms, resting HR &ge;{num(WATCH_RESTING_HR_AT_OR_ABOVE)}&nbsp;bpm, or Garmin's own HRV status reading UNBALANCED/LOW. ALERT = sleep score under {num(ALERT_SLEEP_SCORE_BELOW)} or resting HR &ge;{num(ALERT_RESTING_HR_AT_OR_ABOVE)} &mdash; reserved for a genuinely acute day; a lingering UNBALANCED/LOW status alone stays at WATCH once the core numbers are recovering. These thresholds are personal (see the top of <code>build_wellness_report.py</code>) &mdash; not universal normal ranges.
     This table is daily summaries only; full per-minute HR, 5-minute HRV, and body-battery curves live in <code>wellness_raw/&lt;date&gt;.json</code> on request.
     Source file: <code>wellness.csv</code>.
   </footer>
